@@ -1,13 +1,5 @@
 const FILTERS = [
   "All",
-  "Due Today",
-  "Due Tomorrow",
-  "Due This Week",
-  "Overdue",
-  "No Due Date"
-];
-
-const GROUP_ORDER = [
   "Overdue",
   "Due Today",
   "Due Tomorrow",
@@ -15,6 +7,21 @@ const GROUP_ORDER = [
   "Later",
   "No Due Date"
 ];
+
+const GROUP_ORDER = [
+  "Due Today",
+  "Due Tomorrow",
+  "Due This Week",
+  "Later",
+  "Overdue",
+  "No Due Date"
+];
+
+const COMPLETED_STATUSES = new Set([
+  "Submitted",
+  "Graded",
+  "Released"
+]);
 
 const state = {
   cache: null,
@@ -24,6 +31,7 @@ const state = {
   query: "",
   courseFilter: "all",
   activeFilter: "All",
+  activeTab: "todo",
   selectedDate: null,
   visibleMonth: startOfMonth(new Date())
 };
@@ -33,11 +41,17 @@ const elements = {
   banner: document.getElementById("banner"),
   lastUpdatedText: document.getElementById("lastUpdatedText"),
   summaryText: document.getElementById("summaryText"),
+  tabButtons: Array.from(document.querySelectorAll("[data-tab-button]")),
+  todoPanel: document.getElementById("todoPanel"),
+  calendarPanel: document.getElementById("calendarPanel"),
+  calendarCard: document.querySelector(".calendar-card"),
+  calendarStateArea: document.getElementById("calendarStateArea"),
   calendarMonthLabel: document.getElementById("calendarMonthLabel"),
   calendarWeekdays: document.getElementById("calendarWeekdays"),
   calendarGrid: document.getElementById("calendarGrid"),
   selectedDateText: document.getElementById("selectedDateText"),
   clearDateButton: document.getElementById("clearDateButton"),
+  calendarAssignmentsArea: document.getElementById("calendarAssignmentsArea"),
   todayButton: document.getElementById("todayButton"),
   prevMonthButton: document.getElementById("prevMonthButton"),
   nextMonthButton: document.getElementById("nextMonthButton"),
@@ -78,26 +92,33 @@ function attachEventListeners() {
     startRefresh("manual");
   });
 
+  elements.tabButtons.forEach((button) => {
+    button.addEventListener("click", () => {
+      state.activeTab = button.dataset.tabButton;
+      renderTabs();
+    });
+  });
+
   elements.todayButton.addEventListener("click", () => {
     const today = new Date();
     state.visibleMonth = startOfMonth(today);
     state.selectedDate = formatDayKey(today);
-    render();
+    renderCalendarPanel();
   });
 
   elements.prevMonthButton.addEventListener("click", () => {
     state.visibleMonth = new Date(state.visibleMonth.getFullYear(), state.visibleMonth.getMonth() - 1, 1);
-    renderCalendar();
+    renderCalendarPanel();
   });
 
   elements.nextMonthButton.addEventListener("click", () => {
     state.visibleMonth = new Date(state.visibleMonth.getFullYear(), state.visibleMonth.getMonth() + 1, 1);
-    renderCalendar();
+    renderCalendarPanel();
   });
 
   elements.clearDateButton.addEventListener("click", () => {
     state.selectedDate = null;
-    render();
+    renderCalendarPanel();
   });
 
   elements.searchInput.addEventListener("input", (event) => {
@@ -127,29 +148,11 @@ function attachEventListeners() {
     }
 
     state.selectedDate = button.dataset.day;
-    render();
+    renderCalendarPanel();
   });
 
-  elements.assignmentSections.addEventListener("click", (event) => {
-    const card = event.target.closest("[data-url]");
-    if (!card) {
-      return;
-    }
-
-    openAssignment(card.dataset.url);
-  });
-
-  elements.assignmentSections.addEventListener("keydown", (event) => {
-    const card = event.target.closest("[data-url]");
-    if (!card) {
-      return;
-    }
-
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      openAssignment(card.dataset.url);
-    }
-  });
+  attachAssignmentOpenHandlers(elements.assignmentSections);
+  attachAssignmentOpenHandlers(elements.calendarAssignmentsArea);
 }
 
 async function loadInitialState() {
@@ -177,7 +180,10 @@ function applyCacheToState() {
   state.assignments = Array.isArray(state.cache && state.cache.assignments) ? state.cache.assignments : [];
 
   if (!state.selectedDate) {
-    const firstAssignmentWithDate = state.assignments.find((assignment) => assignment.dueAt);
+    const firstUpcomingAssignment = getUpcomingAssignments()[0];
+    const firstTodoAssignmentWithDate = getTodoAssignments().find((assignment) => assignment.dueAt);
+    const firstCalendarAssignment = getCalendarBaseAssignments()[0];
+    const firstAssignmentWithDate = firstUpcomingAssignment || firstTodoAssignmentWithDate || firstCalendarAssignment || state.assignments.find((assignment) => assignment.dueAt);
     state.visibleMonth = startOfMonth(firstAssignmentWithDate ? new Date(firstAssignmentWithDate.dueAt) : new Date());
   }
 
@@ -194,7 +200,8 @@ function handleRefreshStatus(refreshState) {
     renderBanner();
   }
 
-  renderStateArea();
+  renderTodoPanel();
+  renderCalendarPanel();
   updateTopMeta();
 }
 
@@ -202,7 +209,8 @@ async function startRefresh(reason) {
   state.loading = true;
   state.progressText = "Starting refresh...";
   renderBanner();
-  renderStateArea();
+  renderTodoPanel();
+  renderCalendarPanel();
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -216,11 +224,16 @@ async function startRefresh(reason) {
   } catch (error) {
     state.loading = false;
     showBanner(error.message || "Unable to refresh Gradescope data.", "error");
-    renderStateArea();
+    renderTodoPanel();
+    renderCalendarPanel();
   }
 }
 
 async function openAssignment(url) {
+  if (!url) {
+    return;
+  }
+
   try {
     await chrome.runtime.sendMessage({
       type: "OPEN_ASSIGNMENT",
@@ -232,24 +245,35 @@ async function openAssignment(url) {
 }
 
 function render() {
+  renderTabs();
   updateTopMeta();
   renderBanner();
-  renderCalendar();
   renderFilterChips();
-  renderStateArea();
-  renderAssignments();
+  renderTodoPanel();
+  renderCalendarPanel();
+}
+
+function renderTabs() {
+  elements.tabButtons.forEach((button) => {
+    const isActive = button.dataset.tabButton === state.activeTab;
+    button.classList.toggle("is-active", isActive);
+    button.setAttribute("aria-selected", String(isActive));
+  });
+
+  elements.todoPanel.classList.toggle("hidden", state.activeTab !== "todo");
+  elements.calendarPanel.classList.toggle("hidden", state.activeTab !== "calendar");
 }
 
 function updateTopMeta() {
-  const summary = state.cache && state.cache.summary ? state.cache.summary : null;
-  const totalAssignments = summary ? summary.totalAssignments : state.assignments.length;
-  const courseCount = summary ? summary.courseCount : new Set(state.assignments.map((assignment) => assignment.courseName)).size;
+  const todoAssignments = getTodoAssignments();
+  const upcomingAssignments = getUpcomingAssignments();
+  const courseCount = new Set(todoAssignments.map((assignment) => assignment.courseName)).size;
 
   elements.lastUpdatedText.textContent = state.cache && state.cache.updatedAt
     ? `Last updated: ${formatTimestamp(state.cache.updatedAt)}`
     : "Last updated: Never";
 
-  elements.summaryText.textContent = `${totalAssignments} assignment${totalAssignments === 1 ? "" : "s"} across ${courseCount} course${courseCount === 1 ? "" : "s"}`;
+  elements.summaryText.textContent = `${todoAssignments.length} todo item${todoAssignments.length === 1 ? "" : "s"} across ${courseCount} course${courseCount === 1 ? "" : "s"} · ${upcomingAssignments.length} upcoming`;
 }
 
 function renderBanner() {
@@ -283,7 +307,33 @@ function renderWeekdays() {
   elements.calendarWeekdays.innerHTML = weekdayNames.map((day) => `<div class="calendar-weekday">${day}</div>`).join("");
 }
 
-function renderCalendar() {
+function renderCalendarPanel() {
+  const calendarBaseAssignments = getCalendarBaseAssignments();
+
+  if (!state.assignments.length) {
+    elements.calendarCard.classList.add("hidden");
+    elements.calendarStateArea.innerHTML = renderStateCard(
+      "No cached assignments yet",
+      "Open Gradescope while signed in, then press Refresh to scan your course assignment pages and build the planner."
+    );
+    return;
+  }
+
+  if (!calendarBaseAssignments.length) {
+    elements.calendarCard.classList.add("hidden");
+    elements.calendarStateArea.innerHTML = renderStateCard(
+      "No dated assignments",
+      "Gradescope has not exposed any assignments with due dates yet, so there is nothing to place on the calendar."
+    );
+    return;
+  }
+
+  elements.calendarCard.classList.remove("hidden");
+  elements.calendarStateArea.innerHTML = "";
+  renderCalendar(calendarBaseAssignments);
+}
+
+function renderCalendar(assignments) {
   const monthStart = startOfMonth(state.visibleMonth);
   const monthEnd = endOfMonth(state.visibleMonth);
   const gridStart = new Date(monthStart);
@@ -292,8 +342,7 @@ function renderCalendar() {
   gridEnd.setDate(monthEnd.getDate() + (6 - monthEnd.getDay()));
 
   const dayButtons = [];
-  const calendarAssignments = getCalendarAssignments();
-  const counts = countAssignmentsByDay(calendarAssignments);
+  const counts = countAssignmentsByDay(assignments);
   const todayKey = formatDayKey(new Date());
 
   elements.calendarMonthLabel.textContent = monthStart.toLocaleDateString(undefined, {
@@ -328,14 +377,49 @@ function renderCalendar() {
   }
 
   elements.calendarGrid.innerHTML = dayButtons.join("");
+  renderCalendarSummary(assignments);
+  renderCalendarAssignments(assignments);
+}
 
+function renderCalendarSummary(assignments) {
   if (state.selectedDate) {
-    elements.selectedDateText.textContent = `Filtering to ${formatDayLabel(state.selectedDate)}`;
+    const count = assignments.filter((assignment) => formatDayKeyFromAssignment(assignment) === state.selectedDate).length;
+    elements.selectedDateText.textContent = `${count} assignment${count === 1 ? "" : "s"} due on ${formatDayLabel(state.selectedDate)}`;
     elements.clearDateButton.classList.remove("hidden");
-  } else {
-    elements.selectedDateText.textContent = "Showing all dates";
-    elements.clearDateButton.classList.add("hidden");
+    return;
   }
+
+  elements.selectedDateText.textContent = `Showing ${assignments.length} dated assignment${assignments.length === 1 ? "" : "s"}`;
+  elements.clearDateButton.classList.add("hidden");
+}
+
+function renderCalendarAssignments(assignments) {
+  if (!state.selectedDate) {
+    elements.calendarAssignmentsArea.innerHTML = renderCalendarHint(
+      "Select a date to see which assignments are due that day."
+    );
+    return;
+  }
+
+  const selectedAssignments = getCalendarAssignments()
+    .sort(compareAssignmentsForRender);
+
+  if (!selectedAssignments.length) {
+    elements.calendarAssignmentsArea.innerHTML = renderCalendarHint(
+      `No assignments are due on ${formatDayLabel(state.selectedDate)}.`
+    );
+    return;
+  }
+
+  elements.calendarAssignmentsArea.innerHTML = `
+    <div class="calendar-assignments-header">
+      <h3 class="calendar-assignments-title">${escapeHtml(formatDayLabel(state.selectedDate))}</h3>
+      <span class="group-subtitle">${selectedAssignments.length} assignment${selectedAssignments.length === 1 ? "" : "s"}</span>
+    </div>
+    <div class="assignment-list">
+      ${selectedAssignments.map(renderAssignmentCard).join("")}
+    </div>
+  `;
 }
 
 function renderFilterChips() {
@@ -351,7 +435,7 @@ function renderFilterChips() {
 
 function populateCourseFilter() {
   const currentValue = state.courseFilter;
-  const courseNames = Array.from(new Set(state.assignments.map((assignment) => assignment.courseName))).sort((left, right) => left.localeCompare(right));
+  const courseNames = Array.from(new Set(getTodoAssignments().map((assignment) => assignment.courseName))).sort((left, right) => left.localeCompare(right));
 
   elements.courseFilter.innerHTML = [
     '<option value="all">All courses</option>',
@@ -366,8 +450,15 @@ function populateCourseFilter() {
   }
 }
 
+function renderTodoPanel() {
+  renderStateArea();
+  renderAssignments();
+}
+
 function renderStateArea() {
-  if (state.loading && !state.assignments.length) {
+  const todoAssignments = getTodoAssignments();
+
+  if (state.loading && !todoAssignments.length) {
     elements.stateArea.innerHTML = `
       <div class="panel-card state-card is-loading">
         <h3>Gathering your Gradescope assignments</h3>
@@ -379,12 +470,18 @@ function renderStateArea() {
   }
 
   if (!state.assignments.length) {
-    elements.stateArea.innerHTML = `
-      <div class="panel-card state-card">
-        <h3>No cached assignments yet</h3>
-        <p>Open Gradescope while signed in, then press Refresh to scan your course assignment pages and build the dashboard.</p>
-      </div>
-    `;
+    elements.stateArea.innerHTML = renderStateCard(
+      "No cached assignments yet",
+      "Open Gradescope while signed in, then press Refresh to scan your course assignment pages and build the planner."
+    );
+    return;
+  }
+
+  if (!todoAssignments.length) {
+    elements.stateArea.innerHTML = renderStateCard(
+      "No todo items",
+      "Your Gradescope assignments currently look complete, so there is nothing left in the Todo view right now."
+    );
     return;
   }
 
@@ -392,20 +489,19 @@ function renderStateArea() {
 }
 
 function renderAssignments() {
+  const todoAssignments = getTodoAssignments();
   const visibleAssignments = getVisibleAssignments();
 
-  if (!state.assignments.length) {
+  if (!todoAssignments.length) {
     elements.assignmentSections.innerHTML = "";
     return;
   }
 
   if (!visibleAssignments.length) {
-    elements.assignmentSections.innerHTML = `
-      <div class="panel-card state-card">
-        <h3>No assignments match these filters</h3>
-        <p>Try clearing the date filter, switching the chip selection, or broadening the search.</p>
-      </div>
-    `;
+    elements.assignmentSections.innerHTML = renderStateCard(
+      "No assignments match these filters",
+      "Try clearing the search, switching the course filter, or choosing a different chip."
+    );
     return;
   }
 
@@ -431,6 +527,7 @@ function renderAssignments() {
 }
 
 function renderAssignmentCard(assignment) {
+  const canOpen = Boolean(assignment.url);
   const urgencyClass = urgencyToClass(getUrgencyLabel(assignment));
   const statusMarkup = assignment.status ? `<span class="status-pill">${escapeHtml(assignment.status)}</span>` : "";
   const pointsMarkup = assignment.points ? `<span class="points-pill">${escapeHtml(assignment.points)}</span>` : "";
@@ -438,9 +535,17 @@ function renderAssignmentCard(assignment) {
   const secondaryLine = assignment.timestampText && assignment.timestampText !== assignment.dueLabel
     ? `<p class="assignment-secondary">${escapeHtml(assignment.timestampText)}</p>`
     : "";
+  const locationText = canOpen
+    ? escapeHtml(assignment.url.replace("https://www.gradescope.com", "gradescope.com"))
+    : "No direct link available";
+  const actionMarkup = canOpen
+    ? '<button class="assignment-open-button" type="button">Open</button>'
+    : '<button class="assignment-open-button" type="button" disabled>Unavailable</button>';
+  const tabIndex = canOpen ? "0" : "-1";
+  const urlAttribute = canOpen ? ` data-url="${escapeAttribute(assignment.url)}"` : "";
 
   return `
-    <article class="assignment-card ${urgencyClass}" tabindex="0" data-url="${escapeAttribute(assignment.url)}">
+    <article class="assignment-card ${urgencyClass}" tabindex="${tabIndex}"${urlAttribute}>
       <div class="assignment-card-top">
         <span class="course-pill">${escapeHtml(assignment.courseName || "Unknown Course")}</span>
         <div class="assignment-badges">
@@ -452,38 +557,19 @@ function renderAssignmentCard(assignment) {
       <p class="assignment-meta">${escapeHtml(humanDueLabel)}</p>
       ${secondaryLine}
       <div class="assignment-card-bottom">
-        <span class="group-subtitle">${escapeHtml(assignment.url.replace("https://www.gradescope.com", "gradescope.com"))}</span>
-        <button class="assignment-open-button" type="button">Open</button>
+        <span class="group-subtitle">${locationText}</span>
+        ${actionMarkup}
       </div>
     </article>
   `;
 }
 
 function getVisibleAssignments() {
-  return state.assignments.filter((assignment) => {
-    if (state.courseFilter !== "all" && assignment.courseName !== state.courseFilter) {
-      return false;
-    }
+  return getAssignmentsMatchingControls(getTodoAssignments()).filter((assignment) => matchesFilterChip(assignment, state.activeFilter));
+}
 
-    if (state.query) {
-      const haystack = [
-        assignment.title,
-        assignment.courseName,
-        assignment.status,
-        assignment.points,
-        assignment.dueLabel,
-        assignment.timestampText
-      ].filter(Boolean).join(" ").toLowerCase();
-
-      if (!haystack.includes(state.query)) {
-        return false;
-      }
-    }
-
-    if (!matchesFilterChip(assignment, state.activeFilter)) {
-      return false;
-    }
-
+function getCalendarAssignments() {
+  return getCalendarBaseAssignments().filter((assignment) => {
     if (state.selectedDate && formatDayKeyFromAssignment(assignment) !== state.selectedDate) {
       return false;
     }
@@ -492,19 +578,59 @@ function getVisibleAssignments() {
   });
 }
 
-function getCalendarAssignments() {
-  return state.assignments.filter((assignment) => {
+function getAssignmentsMatchingControls(assignments) {
+  return assignments.filter((assignment) => {
     if (state.courseFilter !== "all" && assignment.courseName !== state.courseFilter) {
       return false;
     }
 
-    if (!state.query) {
-      return true;
+    if (state.query && !matchesQuery(assignment, state.query)) {
+      return false;
     }
 
-    const haystack = [assignment.title, assignment.courseName, assignment.dueLabel].filter(Boolean).join(" ").toLowerCase();
-    return haystack.includes(state.query);
+    return true;
   });
+}
+
+function getTodoAssignments() {
+  return state.assignments.filter((assignment) => {
+    if (isAssignmentCompleted(assignment)) {
+      return false;
+    }
+
+    return true;
+  });
+}
+
+function getUpcomingAssignments() {
+  return getTodoAssignments().filter((assignment) => {
+    if (!assignment.dueAt) {
+      return false;
+    }
+
+    return new Date(assignment.dueAt) >= startOfDay(new Date());
+  });
+}
+
+function getCalendarBaseAssignments() {
+  return state.assignments.filter((assignment) => Boolean(assignment.dueAt));
+}
+
+function isAssignmentCompleted(assignment) {
+  return COMPLETED_STATUSES.has(String(assignment.status || "").trim());
+}
+
+function matchesQuery(assignment, query) {
+  const haystack = [
+    assignment.title,
+    assignment.courseName,
+    assignment.status,
+    assignment.points,
+    assignment.dueLabel,
+    assignment.timestampText
+  ].filter(Boolean).join(" ").toLowerCase();
+
+  return haystack.includes(query);
 }
 
 function countAssignmentsByDay(assignments) {
@@ -520,6 +646,29 @@ function countAssignmentsByDay(assignments) {
   }
 
   return counts;
+}
+
+function compareAssignmentsForRender(left, right) {
+  if (!left.dueAt && !right.dueAt) {
+    return left.title.localeCompare(right.title);
+  }
+
+  if (!left.dueAt) {
+    return 1;
+  }
+
+  if (!right.dueAt) {
+    return -1;
+  }
+
+  const leftTime = new Date(left.dueAt).getTime();
+  const rightTime = new Date(right.dueAt).getTime();
+
+  if (leftTime === rightTime) {
+    return left.title.localeCompare(right.title);
+  }
+
+  return leftTime - rightTime;
 }
 
 function buildAssignmentGroups(assignments) {
@@ -547,6 +696,7 @@ function matchesFilterChip(assignment, filterName) {
   }
 
   const urgencyLabel = getUrgencyLabel(assignment);
+
   if (filterName === "No Due Date") {
     return urgencyLabel === "No Due Date";
   }
@@ -616,12 +766,12 @@ function getAssignmentDueLabel(assignment) {
 
 function subtitleForGroup(groupName) {
   const subtitles = {
-    "Overdue": "Past due items that still need attention.",
-    "Due Today": "Assignments closing before the day ends.",
-    "Due Tomorrow": "The next set of deadlines coming up.",
-    "Due This Week": "Remaining due dates before this week wraps up.",
-    "Later": "Upcoming work scheduled after this week.",
-    "No Due Date": "Assignments without a visible due date on Gradescope."
+    "Overdue": "Incomplete work that has already passed its due date.",
+    "Due Today": "Assignments that still need attention before today ends.",
+    "Due Tomorrow": "The next deadlines coming up after today.",
+    "Due This Week": "Open work due before this week wraps up.",
+    "Later": "Upcoming assignments scheduled after this week.",
+    "No Due Date": "Incomplete work without a visible due date on Gradescope."
   };
 
   return subtitles[groupName] || "";
@@ -638,6 +788,23 @@ function urgencyToClass(urgencyLabel) {
   };
 
   return classes[urgencyLabel] || "";
+}
+
+function renderStateCard(title, body) {
+  return `
+    <div class="panel-card state-card">
+      <h3>${escapeHtml(title)}</h3>
+      <p>${escapeHtml(body)}</p>
+    </div>
+  `;
+}
+
+function renderCalendarHint(body) {
+  return `
+    <div class="panel-card state-card">
+      <p>${escapeHtml(body)}</p>
+    </div>
+  `;
 }
 
 function formatTimestamp(isoString) {
@@ -729,4 +896,27 @@ function escapeHtml(value) {
 
 function escapeAttribute(value) {
   return escapeHtml(value);
+}
+
+function attachAssignmentOpenHandlers(container) {
+  container.addEventListener("click", (event) => {
+    const card = event.target.closest("[data-url]");
+    if (!card) {
+      return;
+    }
+
+    openAssignment(card.dataset.url);
+  });
+
+  container.addEventListener("keydown", (event) => {
+    const card = event.target.closest("[data-url]");
+    if (!card) {
+      return;
+    }
+
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      openAssignment(card.dataset.url);
+    }
+  });
 }

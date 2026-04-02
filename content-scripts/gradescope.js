@@ -23,10 +23,30 @@
     }
 
     if (message.type === "GS_EXTRACT_ASSIGNMENTS") {
-      sendResponse(extractAssignmentsFromPage(message.courseHint || null));
+      extractAssignmentsFromPageAsync(message.courseHint || null)
+        .then(sendResponse)
+        .catch((error) => {
+          sendResponse({
+            ok: false,
+            requiresLogin: false,
+            courseName: message.courseHint && message.courseHint.courseName ? message.courseHint.courseName : "Unknown Course",
+            courseUrl: message.courseHint && message.courseHint.courseUrl ? message.courseHint.courseUrl : window.location.href,
+            assignments: [],
+            assignmentListUrls: [],
+            error: error.message
+          });
+        });
       return true;
     }
   });
+
+  async function extractAssignmentsFromPageAsync(courseHint) {
+    if (!isLoginPage()) {
+      await waitForAssignmentsContent();
+    }
+
+    return extractAssignmentsFromPage(courseHint);
+  }
 
   function extractDashboardData() {
     if (isLoginPage()) {
@@ -168,6 +188,8 @@
       return [];
     }
 
+    results.add(`${window.location.origin}/courses/${courseId}/assignments`);
+
     const anchors = Array.from(document.querySelectorAll("a[href*='/courses/']"));
 
     for (const anchor of anchors) {
@@ -188,6 +210,14 @@
   }
 
   function collectAssignments(courseName, courseUrl) {
+    const studentAssignmentsTable = document.querySelector("#assignments-student-table");
+    if (studentAssignmentsTable) {
+      const tableAssignments = collectAssignmentsFromTable(studentAssignmentsTable, courseName, courseUrl);
+      if (tableAssignments.length) {
+        return tableAssignments;
+      }
+    }
+
     const assignmentLinks = Array.from(document.querySelectorAll("a[href*='/assignments/']"));
     const seenUrls = new Set();
     const assignments = [];
@@ -214,8 +244,67 @@
     return dedupeAssignments(assignments).sort(compareAssignments);
   }
 
+  function collectAssignmentsFromTable(table, courseName, courseUrl) {
+    const rows = Array.from(table.querySelectorAll("tbody tr"));
+    const headerIndexes = getAssignmentsTableHeaderIndexes(table);
+    const assignments = [];
+
+    for (const row of rows) {
+      const link = row.querySelector("a[href*='/assignments/']");
+      const assignment = buildAssignmentFromTableRow(row, link, courseName, courseUrl, headerIndexes);
+      if (!assignment || !assignment.title) {
+        continue;
+      }
+
+      assignments.push(assignment);
+    }
+
+    return dedupeAssignments(assignments).sort(compareAssignments);
+  }
+
   function findAssignmentContainer(link) {
     return link.closest("tr, li, article, section, [role='row'], .card, .assignment, .submission") || link.parentElement;
+  }
+
+  function buildAssignmentFromTableRow(row, link, courseName, courseUrl, headerIndexes) {
+    const cells = Array.from(row.querySelectorAll("td, th"));
+    const nameCell = getCellByHeaderIndex(cells, headerIndexes.name) || cells[0] || null;
+    const url = link ? normalizeAbsoluteUrl(link.getAttribute("href")) : null;
+    const assignmentId = extractAssignmentId(url);
+    const title = cleanText(
+      (link && link.textContent) ||
+      findFirstText(nameCell || row, ["a", "strong", "b", ".table--primaryLink"]) ||
+      (nameCell ? nameCell.textContent : "")
+    );
+
+    if (!title) {
+      return null;
+    }
+
+    const dueCell = getCellByHeaderIndex(cells, headerIndexes.due);
+    const statusCell = getCellByHeaderIndex(cells, headerIndexes.status);
+    const rowLines = extractTextLines(row);
+    const dueInfo = dueCell
+      ? findDueInfo(dueCell, extractTextLines(dueCell), { preferSecondDate: Boolean(headerIndexes.hasReleasedDue) })
+      : findDueInfo(row, rowLines);
+    const status = statusCell ? findStatus(statusCell, extractTextLines(statusCell)) : findStatus(row, rowLines);
+    const points = findPoints(rowLines);
+
+    return {
+      id: assignmentId
+        ? buildAssignmentId(courseUrl, assignmentId)
+        : buildSyntheticAssignmentId(courseUrl, title, dueInfo.timestampText || status || "no-link"),
+      title,
+      courseName: cleanText(courseName) || "Unknown Course",
+      dueAt: dueInfo.isoString,
+      dueLabel: dueInfo.label,
+      status,
+      points,
+      url,
+      courseUrl,
+      source: "gradescope",
+      timestampText: dueInfo.timestampText
+    };
   }
 
   function buildAssignment(link, container, courseName, courseUrl, url, assignmentId) {
@@ -248,7 +337,7 @@
     };
   }
 
-  function findDueInfo(container, rawLines) {
+  function findDueInfo(container, rawLines, options = {}) {
     const timestampCandidates = [];
     const timeElements = Array.from(container.querySelectorAll("time"));
 
@@ -294,12 +383,13 @@
     const uniqueCandidates = Array.from(new Set(timestampCandidates));
 
     for (const candidate of uniqueCandidates) {
-      const parsed = parseDateFromText(candidate);
+      const normalizedCandidate = options.preferSecondDate ? extractPreferredDueText(candidate) || candidate : candidate;
+      const parsed = parseDateFromText(normalizedCandidate);
       if (parsed) {
         return {
           isoString: parsed.toISOString(),
-          label: buildDueLabel(candidate, parsed),
-          timestampText: candidate
+          label: buildDueLabel(normalizedCandidate, parsed),
+          timestampText: normalizedCandidate
         };
       }
     }
@@ -356,6 +446,11 @@
     return `${courseId}:${assignmentId}`;
   }
 
+  function buildSyntheticAssignmentId(courseUrl, title, signature) {
+    const courseId = extractCourseId(courseUrl) || "course";
+    return `${courseId}:synthetic:${slugify(title)}:${slugify(signature || "assignment")}`;
+  }
+
   function dedupeAssignments(assignments) {
     const seen = new Map();
 
@@ -399,6 +494,31 @@
   function extractTextLines(container) {
     const text = cleanText(container ? container.innerText : "");
     return text.split("\n").map((line) => cleanText(line)).filter(Boolean);
+  }
+
+  function getAssignmentsTableHeaderIndexes(table) {
+    const headers = Array.from(table.querySelectorAll("thead th"));
+    const hasReleasedDue = headers.some((header) => /released\s+due/i.test(cleanText(header.textContent)));
+
+    return {
+      name: findTableHeaderIndex(headers, /^name$/i),
+      status: findTableHeaderIndex(headers, /^status$/i),
+      released: findTableHeaderIndex(headers, /\breleased\b/i),
+      due: findTableHeaderIndex(headers, /\bdue\b/i),
+      hasReleasedDue
+    };
+  }
+
+  function findTableHeaderIndex(headers, pattern) {
+    return headers.findIndex((header) => pattern.test(cleanText(header.textContent)));
+  }
+
+  function getCellByHeaderIndex(cells, index) {
+    if (index < 0 || index >= cells.length) {
+      return null;
+    }
+
+    return cells[index];
   }
 
   function normalizeAbsoluteUrl(href) {
@@ -470,6 +590,29 @@
     }
 
     return null;
+  }
+
+  function extractPreferredDueText(text) {
+    const cleaned = cleanText(text);
+    const monthMatches = Array.from(
+      cleaned.matchAll(/(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\s+\d{1,2}(?:,\s*\d{4})?(?:\s+at\s+\d{1,2}(?::\d{2})?\s*[ap]m)?/ig),
+      (match) => cleanText(match[0])
+    );
+
+    if (monthMatches.length >= 2) {
+      return monthMatches[1];
+    }
+
+    const numericMatches = Array.from(
+      cleaned.matchAll(/\d{1,2}\/\d{1,2}(?:\/\d{2,4})?(?:\s+at\s+\d{1,2}(?::\d{2})?\s*[ap]m)?/ig),
+      (match) => cleanText(match[0])
+    );
+
+    if (numericMatches.length >= 2) {
+      return numericMatches[1];
+    }
+
+    return monthMatches[0] || numericMatches[0] || cleaned;
   }
 
   function parseRelativeDate(text) {
@@ -577,6 +720,44 @@
     return String(value || "")
       .replace(/\s+/g, " ")
       .trim();
+  }
+
+  function slugify(value) {
+    const normalized = String(value || "")
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "");
+
+    return normalized || "item";
+  }
+
+  function waitForAssignmentsContent(timeoutMs = 2500) {
+    return new Promise((resolve) => {
+      const startedAt = Date.now();
+
+      function hasAssignmentContent() {
+        if (document.querySelector("#assignments-student-table tbody tr a[href*='/assignments/']")) {
+          return true;
+        }
+
+        if (document.querySelector("a[href*='/assignments/']")) {
+          return true;
+        }
+
+        return false;
+      }
+
+      function check() {
+        if (hasAssignmentContent() || Date.now() - startedAt >= timeoutMs) {
+          resolve();
+          return;
+        }
+
+        setTimeout(check, 150);
+      }
+
+      check();
+    });
   }
 
   function escapeForRegExp(value) {
