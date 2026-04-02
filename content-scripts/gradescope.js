@@ -269,10 +269,17 @@
   function buildAssignmentFromTableRow(row, link, courseName, courseUrl, headerIndexes) {
     const cells = Array.from(row.querySelectorAll("td, th"));
     const nameCell = getCellByHeaderIndex(cells, headerIndexes.name) || cells[0] || null;
-    const url = link ? normalizeAbsoluteUrl(link.getAttribute("href")) : null;
-    const assignmentId = extractAssignmentId(url);
+    const submitButton = row.querySelector("button[data-assignment-id], button[data-post-url], .js-submitAssignment");
+    const linkedUrl = link ? normalizeAbsoluteUrl(link.getAttribute("href")) : null;
+    const buttonUrl = submitButton ? normalizeAbsoluteUrl(submitButton.getAttribute("data-post-url")) : null;
+    const url = linkedUrl || null;
+    const assignmentId = extractAssignmentId(linkedUrl)
+      || extractAssignmentId(buttonUrl)
+      || cleanText(submitButton ? submitButton.getAttribute("data-assignment-id") : "");
     const title = cleanText(
       (link && link.textContent) ||
+      (submitButton ? submitButton.getAttribute("data-assignment-title") : "") ||
+      extractAssignmentTitleFromButton(submitButton) ||
       findFirstText(nameCell || row, ["a", "strong", "b", ".table--primaryLink"]) ||
       (nameCell ? nameCell.textContent : "")
     );
@@ -340,13 +347,16 @@
   function findDueInfo(container, rawLines, options = {}) {
     const timestampCandidates = [];
     const timeElements = Array.from(container.querySelectorAll("time"));
+    const preferredTimeElements = selectPreferredDueTimeElements(timeElements);
 
-    for (const timeElement of timeElements) {
+    for (const timeElement of preferredTimeElements) {
       const datetime = timeElement.getAttribute("datetime");
       if (datetime) {
         const parsedDatetime = new Date(datetime);
         if (!Number.isNaN(parsedDatetime.getTime())) {
-          const readableText = cleanText(timeElement.textContent) || formatDate(parsedDatetime);
+          const readableText = cleanText(timeElement.textContent)
+            || extractTimestampTextFromAriaLabel(timeElement.getAttribute("aria-label"))
+            || formatDate(parsedDatetime);
           return {
             isoString: parsedDatetime.toISOString(),
             label: readableText.startsWith("Due") ? readableText : `Due ${readableText}`,
@@ -449,6 +459,19 @@
   function buildSyntheticAssignmentId(courseUrl, title, signature) {
     const courseId = extractCourseId(courseUrl) || "course";
     return `${courseId}:synthetic:${slugify(title)}:${slugify(signature || "assignment")}`;
+  }
+
+  function extractAssignmentTitleFromButton(button) {
+    if (!button) {
+      return "";
+    }
+
+    const ariaLabel = cleanText(button.getAttribute("aria-label"));
+    if (!ariaLabel) {
+      return "";
+    }
+
+    return ariaLabel.replace(/^submit\s+/i, "");
   }
 
   function dedupeAssignments(assignments) {
@@ -615,6 +638,41 @@
     return monthMatches[0] || numericMatches[0] || cleaned;
   }
 
+  function selectPreferredDueTimeElements(timeElements) {
+    const preferredDueElements = timeElements.filter((timeElement) => {
+      const className = cleanText(timeElement.className);
+      const ariaLabel = cleanText(timeElement.getAttribute("aria-label"));
+      return /duedate/i.test(className) && !/^late due date/i.test(ariaLabel);
+    });
+
+    if (preferredDueElements.length) {
+      return preferredDueElements;
+    }
+
+    const nonReleaseElements = timeElements.filter((timeElement) => {
+      const className = cleanText(timeElement.className);
+      return !/releasedate/i.test(className);
+    });
+
+    if (nonReleaseElements.length) {
+      return nonReleaseElements;
+    }
+
+    return timeElements;
+  }
+
+  function extractTimestampTextFromAriaLabel(ariaLabel) {
+    const cleaned = cleanText(ariaLabel);
+    if (!cleaned) {
+      return null;
+    }
+
+    return cleaned
+      .replace(/^released at\s+/i, "")
+      .replace(/^due at\s+/i, "")
+      .replace(/^late due date at\s+/i, "");
+  }
+
   function parseRelativeDate(text) {
     const lowered = text.toLowerCase();
     const now = new Date();
@@ -736,6 +794,10 @@
       const startedAt = Date.now();
 
       function hasAssignmentContent() {
+        if (document.querySelector("#assignments-student-table tbody tr button[data-assignment-id]")) {
+          return true;
+        }
+
         if (document.querySelector("#assignments-student-table tbody tr a[href*='/assignments/']")) {
           return true;
         }
