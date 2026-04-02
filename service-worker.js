@@ -1,7 +1,7 @@
 const GRADESCOPE_ORIGIN = "https://www.gradescope.com";
 const DASHBOARD_URL = `${GRADESCOPE_ORIGIN}/`;
 const CACHE_KEY = "gradescopeDashboardCache";
-const AUTO_REFRESH_MAX_AGE_MS = 10 * 60 * 1000;
+const AUTO_REFRESH_MAX_AGE_MS = 60 * 60 * 1000;
 const AUTO_REFRESH_COOLDOWN_MS = 60 * 1000;
 const SCRAPE_WAIT_MS = 350;
 const TAB_TIMEOUT_MS = 30000;

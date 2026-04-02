@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "Gradescope Due Dates Dashboard",
-  "description": "A dark side-panel dashboard that gathers Gradescope assignments and due dates across all of your courses.",
+  "name": "Gradescope DueDates Planner",
+  "description": "A Gradescope side-panel planner with synced Todo and Calendar views, smart refresh, and automatic opening on Gradescope tabs.",
   "version": "1.0.0",
   "permissions": [
     "storage",
@@ -15,7 +15,7 @@
     "service_worker": "service-worker.js"
   },
   "action": {
-    "default_title": "Open Gradescope Due Dates Dashboard"
+    "default_title": "Open Gradescope DueDates Planner"
   },
   "side_panel": {
     "default_path": "sidepanel.html"
