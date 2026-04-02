@@ -1,0 +1,581 @@
+:root {
+  color-scheme: dark;
+  --bg: #0b1020;
+  --bg-secondary: #12182b;
+  --panel: rgba(16, 23, 39, 0.88);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --panel-shadow: 0 18px 40px rgba(0, 0, 0, 0.32);
+  --text: #f5f7fb;
+  --muted: #9ca9c7;
+  --muted-strong: #ced6ea;
+  --accent: #72d0ff;
+  --accent-soft: rgba(114, 208, 255, 0.18);
+  --success: #73e2a7;
+  --warning: #ffcf70;
+  --danger: #ff7f88;
+  --chip: rgba(255, 255, 255, 0.05);
+  --chip-active: rgba(114, 208, 255, 0.2);
+  --input: rgba(255, 255, 255, 0.05);
+  --card-hover: rgba(255, 255, 255, 0.05);
+  --calendar-selection: rgba(114, 208, 255, 0.18);
+  --calendar-selection-border: rgba(114, 208, 255, 0.55);
+  --font-stack: "Avenir Next", "Segoe UI", "Helvetica Neue", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background:
+    radial-gradient(circle at top left, rgba(114, 208, 255, 0.18), transparent 38%),
+    radial-gradient(circle at top right, rgba(46, 95, 190, 0.2), transparent 32%),
+    linear-gradient(180deg, #0c1021 0%, #090d1b 100%);
+  color: var(--text);
+  font-family: var(--font-stack);
+}
+
+body {
+  min-width: 360px;
+}
+
+.app-shell {
+  position: relative;
+  padding: 18px;
+}
+
+.background-glow {
+  position: fixed;
+  inset: auto;
+  border-radius: 999px;
+  filter: blur(70px);
+  opacity: 0.4;
+  pointer-events: none;
+}
+
+.background-glow-a {
+  width: 180px;
+  height: 180px;
+  top: -40px;
+  right: -40px;
+  background: rgba(99, 181, 255, 0.25);
+}
+
+.background-glow-b {
+  width: 220px;
+  height: 220px;
+  bottom: 140px;
+  left: -80px;
+  background: rgba(60, 119, 214, 0.22);
+}
+
+.panel-card {
+  position: relative;
+  background: var(--panel);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--panel-border);
+  border-radius: 24px;
+  box-shadow: var(--panel-shadow);
+}
+
+.top-area,
+.calendar-card,
+.controls-card,
+.state-card,
+.assignment-group {
+  margin-bottom: 16px;
+}
+
+.top-area,
+.calendar-card,
+.controls-card {
+  padding: 18px;
+}
+
+.top-row,
+.calendar-top-row,
+.group-header,
+.assignment-card-top,
+.assignment-badges,
+.assignment-card-bottom,
+.meta-row,
+.selected-date-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.brand-icon {
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  box-shadow: 0 10px 24px rgba(63, 143, 255, 0.22);
+}
+
+.eyebrow,
+.section-label,
+.field-label {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: 24px;
+  line-height: 1.15;
+}
+
+h2 {
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.meta-row {
+  margin-top: 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.banner {
+  margin-top: 14px;
+  padding: 11px 13px;
+  border-radius: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.banner-info {
+  background: rgba(114, 208, 255, 0.12);
+  color: #d9f3ff;
+}
+
+.banner-warning {
+  background: rgba(255, 207, 112, 0.12);
+  color: #ffeac0;
+}
+
+.banner-error {
+  background: rgba(255, 127, 136, 0.12);
+  color: #ffd5d9;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.secondary-button,
+.ghost-button,
+.icon-button,
+.inline-button,
+.assignment-open-button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text);
+  cursor: pointer;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease;
+}
+
+.secondary-button:hover,
+.ghost-button:hover,
+.icon-button:hover,
+.inline-button:hover,
+.assignment-open-button:hover,
+.chip-button:hover,
+.assignment-card:hover {
+  transform: translateY(-1px);
+}
+
+.secondary-button {
+  border-radius: 14px;
+  padding: 10px 14px;
+  font-weight: 700;
+}
+
+.ghost-button,
+.inline-button,
+.assignment-open-button {
+  border-radius: 12px;
+  padding: 8px 12px;
+  font-weight: 600;
+}
+
+.icon-button {
+  width: 38px;
+  height: 38px;
+  border-radius: 999px;
+  font-size: 24px;
+  line-height: 1;
+}
+
+.calendar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.calendar-weekdays,
+.calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.calendar-weekdays {
+  margin-top: 14px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.calendar-weekday {
+  text-align: center;
+  padding: 6px 0;
+}
+
+.calendar-day {
+  position: relative;
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: 16px;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 8px;
+  font: inherit;
+}
+
+.calendar-day:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.calendar-day.is-other-month {
+  color: rgba(156, 169, 199, 0.45);
+}
+
+.calendar-day.is-today {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.16);
+}
+
+.calendar-day.is-selected {
+  background: var(--calendar-selection);
+  border-color: var(--calendar-selection-border);
+}
+
+.calendar-day-count {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #08111f;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.calendar-day-dot {
+  position: absolute;
+  left: 50%;
+  bottom: 7px;
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.selected-date-row {
+  margin-top: 12px;
+  color: var(--muted-strong);
+  font-size: 13px;
+}
+
+.control-stack + .control-stack {
+  margin-top: 14px;
+}
+
+.text-input,
+.select-input {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  padding: 12px 14px;
+  background: var(--input);
+  color: var(--text);
+  font: inherit;
+}
+
+.text-input::placeholder {
+  color: rgba(206, 214, 234, 0.55);
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.chip-button {
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  padding: 9px 12px;
+  background: var(--chip);
+  color: var(--muted-strong);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  transition: transform 140ms ease, background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.chip-button.is-active {
+  background: var(--chip-active);
+  border-color: rgba(114, 208, 255, 0.45);
+  color: #eaf8ff;
+}
+
+.state-card {
+  padding: 18px;
+}
+
+.state-card h3 {
+  font-size: 18px;
+  margin-bottom: 8px;
+}
+
+.state-card p {
+  color: var(--muted-strong);
+  line-height: 1.5;
+}
+
+.state-card.is-loading .loading-bar {
+  margin-top: 14px;
+}
+
+.loading-bar {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.loading-bar::after {
+  content: "";
+  display: block;
+  width: 35%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, rgba(114, 208, 255, 0.24), var(--accent));
+  animation: loading-slide 1.15s ease-in-out infinite;
+}
+
+@keyframes loading-slide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(320%);
+  }
+}
+
+.assignment-group {
+  padding: 18px;
+}
+
+.group-header {
+  margin-bottom: 14px;
+}
+
+.group-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.group-count {
+  min-width: 30px;
+  height: 30px;
+  padding: 0 8px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.group-subtitle {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.assignment-list {
+  display: grid;
+  gap: 12px;
+}
+
+.assignment-card {
+  position: relative;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 22px;
+  padding: 16px;
+  background: rgba(255, 255, 255, 0.035);
+  cursor: pointer;
+  transition: transform 160ms ease, background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+.assignment-card:hover {
+  background: var(--card-hover);
+  border-color: rgba(255, 255, 255, 0.14);
+  box-shadow: 0 14px 26px rgba(0, 0, 0, 0.22);
+}
+
+.assignment-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 16px;
+  bottom: 16px;
+  width: 4px;
+  border-radius: 999px;
+  background: var(--accent);
+}
+
+.assignment-card.is-overdue::before {
+  background: var(--danger);
+}
+
+.assignment-card.is-due-today::before {
+  background: var(--warning);
+}
+
+.assignment-card.is-due-tomorrow::before {
+  background: #82b9ff;
+}
+
+.assignment-card.is-due-this-week::before {
+  background: var(--success);
+}
+
+.course-pill,
+.status-pill,
+.points-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  border-radius: 999px;
+  padding: 5px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.assignment-badges {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.course-pill::before {
+  content: "";
+  width: 9px;
+  height: 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.4);
+}
+
+.status-pill {
+  background: rgba(114, 208, 255, 0.12);
+  color: #d9f3ff;
+}
+
+.assignment-title {
+  margin-top: 14px;
+  font-size: 22px;
+  line-height: 1.18;
+}
+
+.assignment-meta {
+  margin-top: 10px;
+  color: var(--muted-strong);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.assignment-secondary {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.assignment-card-bottom {
+  margin-top: 14px;
+}
+
+.assignment-open-button {
+  color: #dff5ff;
+}
+
+.empty-group {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+@media (max-width: 440px) {
+  .app-shell {
+    padding: 14px;
+  }
+
+  .top-area,
+  .calendar-card,
+  .controls-card,
+  .assignment-group,
+  .state-card {
+    padding: 16px;
+  }
+
+  h1 {
+    font-size: 22px;
+  }
+
+  .assignment-title {
+    font-size: 20px;
+  }
+}

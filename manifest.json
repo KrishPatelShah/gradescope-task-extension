@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "Gradescope Due Dates Dashboard",
+  "description": "A dark side-panel dashboard that gathers Gradescope assignments and due dates across all of your courses.",
+  "version": "1.0.0",
+  "permissions": [
+    "storage",
+    "tabs",
+    "sidePanel"
+  ],
+  "host_permissions": [
+    "https://www.gradescope.com/*"
+  ],
+  "background": {
+    "service_worker": "service-worker.js"
+  },
+  "action": {
+    "default_title": "Open Gradescope Due Dates Dashboard"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.gradescope.com/*"
+      ],
+      "js": [
+        "content-scripts/gradescope.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
