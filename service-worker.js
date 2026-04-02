@@ -1,8 +1,8 @@
 const GRADESCOPE_ORIGIN = "https://www.gradescope.com";
 const DASHBOARD_URL = `${GRADESCOPE_ORIGIN}/`;
 const CACHE_KEY = "gradescopeDashboardCache";
-const AUTO_REFRESH_MAX_AGE_MS = 15 * 60 * 1000;
-const AUTO_REFRESH_COOLDOWN_MS = 3 * 60 * 1000;
+const AUTO_REFRESH_MAX_AGE_MS = 10 * 60 * 1000;
+const AUTO_REFRESH_COOLDOWN_MS = 60 * 1000;
 const SCRAPE_WAIT_MS = 350;
 const TAB_TIMEOUT_MS = 30000;
 
@@ -53,11 +53,15 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     return;
   }
 
+  syncActiveSidePanelState(tab).catch((error) => {
+    console.warn("Unable to update active side panel visibility.", error);
+  });
+
   if (!isGradescopeUrl(tab.url)) {
     return;
   }
 
-  maybeAutoRefresh().catch((error) => {
+  maybeAutoRefresh("visit").catch((error) => {
     console.warn("Automatic Gradescope refresh failed.", error);
   });
 });
@@ -66,6 +70,13 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
   try {
     const tab = await chrome.tabs.get(tabId);
     await syncSidePanelForTab(tab);
+    await syncActiveSidePanelState(tab);
+
+    if (!scrapeTabIds.has(tab.id) && isGradescopeUrl(tab.url)) {
+      maybeAutoRefresh("tab_focus").catch((error) => {
+        console.warn("Automatic Gradescope refresh on tab focus failed.", error);
+      });
+    }
   } catch (error) {
     console.warn("Unable to update active tab side panel state.", error);
   }
@@ -155,15 +166,17 @@ async function handleStartRefresh(reason, sendResponse) {
 
 async function handlePanelOpened(sendResponse) {
   try {
-    if (!refreshState.running) {
-      refreshGradescopeData("panel_open").catch((error) => {
+    const shouldRefresh = await shouldAutoRefresh();
+
+    if (shouldRefresh && !refreshState.running) {
+      maybeAutoRefresh("panel_open").catch((error) => {
         console.warn("Panel-open refresh failed.", error);
       });
     }
 
     sendResponse({
       ok: true,
-      shouldRefresh: true,
+      shouldRefresh,
       refreshState
     });
   } catch (error) {
@@ -174,22 +187,24 @@ async function handlePanelOpened(sendResponse) {
   }
 }
 
-async function maybeAutoRefresh() {
+async function maybeAutoRefresh(reason = "visit") {
   const now = Date.now();
 
   if (refreshState.running || now - lastVisitRefreshAt < AUTO_REFRESH_COOLDOWN_MS) {
     return;
   }
 
-  const cache = await getCache();
-  const isStale = !cache || !cache.updatedAt || now - new Date(cache.updatedAt).getTime() > AUTO_REFRESH_MAX_AGE_MS;
-
-  if (!isStale) {
+  if (!await shouldAutoRefresh(now)) {
     return;
   }
 
   lastVisitRefreshAt = now;
-  await refreshGradescopeData("visit");
+  await refreshGradescopeData(reason);
+}
+
+async function shouldAutoRefresh(now = Date.now()) {
+  const cache = await getCache();
+  return !cache || !cache.updatedAt || now - new Date(cache.updatedAt).getTime() > AUTO_REFRESH_MAX_AGE_MS;
 }
 
 async function refreshGradescopeData(reason) {
@@ -565,15 +580,36 @@ async function syncSidePanelForTab(tab) {
     return;
   }
 
-  if (chrome.sidePanel.close) {
-    try {
-      await chrome.sidePanel.close({ tabId: tab.id });
-    } catch (error) {
-      console.warn("Unable to close side panel for non-Gradescope tab.", error);
-    }
+  await chrome.action.disable(tab.id);
+}
+
+async function syncActiveSidePanelState(tab) {
+  if (!tab || !tab.active || typeof tab.windowId !== "number" || !chrome.sidePanel) {
+    return;
   }
 
-  await chrome.action.disable(tab.id);
+  if (scrapeTabIds.has(tab.id)) {
+    return;
+  }
+
+  if (isGradescopeUrl(tab.url)) {
+    try {
+      await chrome.sidePanel.open({ tabId: tab.id });
+    } catch (error) {
+      console.warn("Unable to auto-open side panel on Gradescope tab.", error);
+    }
+    return;
+  }
+
+  if (!chrome.sidePanel.close) {
+    return;
+  }
+
+  try {
+    await chrome.sidePanel.close({ windowId: tab.windowId });
+  } catch (error) {
+    console.warn("Unable to close side panel after leaving Gradescope.", error);
+  }
 }
 
 function normalizeUrl(url) {

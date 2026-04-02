@@ -308,7 +308,7 @@ function renderWeekdays() {
 }
 
 function renderCalendarPanel() {
-  const calendarBaseAssignments = getCalendarBaseAssignments();
+  const calendarBaseAssignments = getCalendarVisibleAssignments();
 
   if (!state.assignments.length) {
     elements.calendarCard.classList.add("hidden");
@@ -322,8 +322,12 @@ function renderCalendarPanel() {
   if (!calendarBaseAssignments.length) {
     elements.calendarCard.classList.add("hidden");
     elements.calendarStateArea.innerHTML = renderStateCard(
-      "No dated assignments",
-      "Gradescope has not exposed any assignments with due dates yet, so there is nothing to place on the calendar."
+      hasAnyDatedAssignments()
+        ? "No dated assignments match these filters"
+        : "No dated assignments",
+      hasAnyDatedAssignments()
+        ? "Try clearing the search, switching the course filter, or choosing a different chip."
+        : "Gradescope has not exposed any assignments with due dates yet, so there is nothing to place on the calendar."
     );
     return;
   }
@@ -435,7 +439,7 @@ function renderFilterChips() {
 
 function populateCourseFilter() {
   const currentValue = state.courseFilter;
-  const courseNames = Array.from(new Set(getTodoAssignments().map((assignment) => assignment.courseName))).sort((left, right) => left.localeCompare(right));
+  const courseNames = Array.from(new Set(state.assignments.map((assignment) => assignment.courseName).filter(Boolean))).sort((left, right) => left.localeCompare(right));
 
   elements.courseFilter.innerHTML = [
     '<option value="all">All courses</option>',
@@ -569,7 +573,7 @@ function getVisibleAssignments() {
 }
 
 function getCalendarAssignments() {
-  return getCalendarBaseAssignments().filter((assignment) => {
+  return getCalendarVisibleAssignments().filter((assignment) => {
     if (state.selectedDate && formatDayKeyFromAssignment(assignment) !== state.selectedDate) {
       return false;
     }
@@ -614,6 +618,14 @@ function getUpcomingAssignments() {
 
 function getCalendarBaseAssignments() {
   return state.assignments.filter((assignment) => Boolean(assignment.dueAt));
+}
+
+function getCalendarVisibleAssignments() {
+  return getAssignmentsMatchingControls(getCalendarBaseAssignments()).filter((assignment) => matchesFilterChip(assignment, state.activeFilter));
+}
+
+function hasAnyDatedAssignments() {
+  return getCalendarBaseAssignments().length > 0;
 }
 
 function isAssignmentCompleted(assignment) {
