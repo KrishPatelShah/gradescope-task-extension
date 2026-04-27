@@ -69,7 +69,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
     return;
   }
 
-  maybeAutoRefresh("visit").catch((error) => {
+  forceAutoRefresh("visit").catch((error) => {
     console.warn("Automatic Gradescope refresh failed.", error);
   });
 });
@@ -81,7 +81,7 @@ chrome.tabs.onActivated.addListener(async ({ tabId }) => {
     await syncActiveSidePanelState(tab);
 
     if (!scrapeTabIds.has(tab.id) && isGradescopeUrl(tab.url)) {
-      maybeAutoRefresh("tab_focus").catch((error) => {
+      forceAutoRefresh("tab_focus").catch((error) => {
         console.warn("Automatic Gradescope refresh on tab focus failed.", error);
       });
     }
@@ -665,12 +665,6 @@ async function syncActiveSidePanelState(tab) {
   }
 
   if (isGradescopeUrl(tab.url)) {
-    try {
-      await chrome.sidePanel.open({ tabId: tab.id });
-    } catch (error) {
-      console.warn("Unable to auto-open side panel on Gradescope tab.", error);
-    }
-
     forceAutoRefresh("gradescope_open").catch((error) => {
       console.warn("Gradescope-open refresh failed.", error);
     });
