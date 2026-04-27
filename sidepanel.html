@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gradescope Due Dates Dashboard</title>
+    <link rel="stylesheet" href="sidepanel.css">
+  </head>
+  <body>
+    <div class="app-shell">
+      <div class="background-glow background-glow-a"></div>
+      <div class="background-glow background-glow-b"></div>
+
+      <header class="top-area panel-card">
+        <div class="top-row">
+          <div class="brand-lockup">
+            <img class="brand-icon" src="icons/icon128.svg" alt="">
+            <div>
+              <p class="eyebrow">Gradescope Planner</p>
+              <h1>Due Dates Dashboard</h1>
+            </div>
+          </div>
+          <button id="refreshButton" class="secondary-button" type="button">Refresh</button>
+        </div>
+
+        <div class="meta-row">
+          <span id="lastUpdatedText">Last updated: Never</span>
+          <span id="summaryText">0 assignments</span>
+        </div>
+
+        <div id="banner" class="banner hidden"></div>
+      </header>
+
+      <section class="panel-card calendar-card">
+        <div class="calendar-top-row">
+          <div>
+            <p class="section-label">Calendar</p>
+            <h2 id="calendarMonthLabel">Month</h2>
+          </div>
+          <div class="calendar-actions">
+            <button id="todayButton" class="ghost-button" type="button">Today</button>
+            <button id="prevMonthButton" class="icon-button" type="button" aria-label="Previous month">&#8249;</button>
+            <button id="nextMonthButton" class="icon-button" type="button" aria-label="Next month">&#8250;</button>
+          </div>
+        </div>
+
+        <div class="calendar-weekdays" id="calendarWeekdays"></div>
+        <div class="calendar-grid" id="calendarGrid"></div>
+
+        <div class="selected-date-row">
+          <span id="selectedDateText">Showing all dates</span>
+          <button id="clearDateButton" class="inline-button hidden" type="button">Clear date filter</button>
+        </div>
+      </section>
+
+      <section class="panel-card controls-card">
+        <div class="control-stack">
+          <label class="field-label" for="searchInput">Search</label>
+          <input id="searchInput" class="text-input" type="search" placeholder="Search assignments or courses">
+        </div>
+
+        <div class="control-stack">
+          <label class="field-label" for="courseFilter">Course</label>
+          <select id="courseFilter" class="select-input">
+            <option value="all">All courses</option>
+          </select>
+        </div>
+
+        <div class="control-stack">
+          <span class="field-label">Filters</span>
+          <div id="filterChips" class="chip-row"></div>
+        </div>
+      </section>
+
+      <section id="stateArea" class="state-area"></section>
+      <section id="assignmentSections" class="assignment-sections"></section>
+    </div>
+
+    <script src="sidepanel.js"></script>
+  </body>
+</html>
