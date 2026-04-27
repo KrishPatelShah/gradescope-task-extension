@@ -9,7 +9,9 @@
     "Open",
     "Closed",
     "In Progress",
-    "Not Submitted"
+    "Not Submitted",
+    "Complete",
+    "Completed"
   ];
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -18,7 +20,16 @@
     }
 
     if (message.type === "GS_EXTRACT_DASHBOARD") {
-      sendResponse(extractDashboardData());
+      extractDashboardDataAsync()
+        .then(sendResponse)
+        .catch((error) => {
+          sendResponse({
+            ok: false,
+            requiresLogin: false,
+            courses: [],
+            error: error.message
+          });
+        });
       return true;
     }
 
@@ -46,6 +57,14 @@
     }
 
     return extractAssignmentsFromPage(courseHint);
+  }
+
+  async function extractDashboardDataAsync() {
+    if (!isLoginPage()) {
+      await waitForDashboardContent();
+    }
+
+    return extractDashboardData();
   }
 
   function extractDashboardData() {
@@ -113,7 +132,7 @@
       const url = normalizeAbsoluteUrl(anchor.getAttribute("href"));
       const courseId = extractCourseId(url);
 
-      if (!courseId || courseMap.has(courseId)) {
+      if (!courseId) {
         continue;
       }
 
@@ -136,10 +155,16 @@
         continue;
       }
 
-      courseMap.set(courseId, {
+      const existing = courseMap.get(courseId);
+      const nextCourse = {
         courseName,
-        courseUrl
-      });
+        courseUrl,
+        expectedAssignmentCount: extractAssignmentCount(card)
+      };
+
+      if (!existing || shouldReplaceCourseCandidate(existing, nextCourse)) {
+        courseMap.set(courseId, nextCourse);
+      }
     }
 
     return Array.from(courseMap.values()).sort((left, right) => left.courseName.localeCompare(right.courseName));
@@ -210,38 +235,20 @@
   }
 
   function collectAssignments(courseName, courseUrl) {
-    const studentAssignmentsTable = document.querySelector("#assignments-student-table");
-    if (studentAssignmentsTable) {
-      const tableAssignments = collectAssignmentsFromTable(studentAssignmentsTable, courseName, courseUrl);
-      if (tableAssignments.length) {
-        return tableAssignments;
+    const tables = findAssignmentTables();
+    if (tables.length) {
+      const assignments = [];
+
+      for (const table of tables) {
+        assignments.push(...collectAssignmentsFromTable(table, courseName, courseUrl));
       }
+
+      return dedupeAssignments(assignments).sort(compareAssignments);
     }
 
-    const assignmentLinks = Array.from(document.querySelectorAll("a[href*='/assignments/']"));
-    const seenUrls = new Set();
-    const assignments = [];
-
-    for (const link of assignmentLinks) {
-      const url = normalizeAbsoluteUrl(link.getAttribute("href"));
-      const assignmentId = extractAssignmentId(url);
-
-      if (!assignmentId || !url || seenUrls.has(url)) {
-        continue;
-      }
-
-      const container = findAssignmentContainer(link);
-      const assignment = buildAssignment(link, container, courseName, courseUrl, url, assignmentId);
-
-      if (!assignment || !assignment.title) {
-        continue;
-      }
-
-      seenUrls.add(url);
-      assignments.push(assignment);
-    }
-
-    return dedupeAssignments(assignments).sort(compareAssignments);
+    return dedupeAssignments(
+      collectAssignmentsFromStructuredContainers(courseName, courseUrl)
+    ).sort(compareAssignments);
   }
 
   function collectAssignmentsFromTable(table, courseName, courseUrl) {
@@ -266,15 +273,64 @@
     return link.closest("tr, li, article, section, [role='row'], .card, .assignment, .submission") || link.parentElement;
   }
 
+  function collectAssignmentsFromStructuredContainers(courseName, courseUrl) {
+    const assignments = [];
+    const handledContainers = new WeakSet();
+    const candidateElements = Array.from(document.querySelectorAll([
+      "a[href*='/assignments/']",
+      "[data-assignment-id]",
+      "[data-assignment-url]",
+      "[data-post-url]"
+    ].join(",")));
+
+    for (const element of candidateElements) {
+      const container = findAssignmentContainerForElement(element);
+      if (!container || handledContainers.has(container)) {
+        continue;
+      }
+
+      handledContainers.add(container);
+
+      const link = container.matches("a[href*='/assignments/']")
+        ? container
+        : container.querySelector("a[href*='/assignments/']");
+      const resolvedUrl = findAssignmentUrlFromElement(container, courseUrl);
+      const assignmentId = findAssignmentIdFromElement(container, resolvedUrl);
+      const assignment = buildAssignment(
+        link || element,
+        container,
+        courseName,
+        courseUrl,
+        resolvedUrl,
+        assignmentId
+      );
+
+      if (assignment && assignment.title) {
+        assignments.push(assignment);
+      }
+    }
+
+    return assignments;
+  }
+
+  function findAssignmentContainerForElement(element) {
+    if (!element) {
+      return null;
+    }
+
+    return element.closest(
+      "tr, li, article, section, [role='row'], .card, .assignment, .submission, .submissionRow, .assignmentRow, .table-row"
+    ) || element.parentElement;
+  }
+
   function buildAssignmentFromTableRow(row, link, courseName, courseUrl, headerIndexes) {
     const cells = Array.from(row.querySelectorAll("td, th"));
     const nameCell = getCellByHeaderIndex(cells, headerIndexes.name) || cells[0] || null;
     const submitButton = row.querySelector("button[data-assignment-id], button[data-post-url], .js-submitAssignment");
     const linkedUrl = link ? normalizeAbsoluteUrl(link.getAttribute("href")) : null;
-    const buttonUrl = submitButton ? normalizeAbsoluteUrl(submitButton.getAttribute("data-post-url")) : null;
-    const url = linkedUrl || null;
-    const assignmentId = extractAssignmentId(linkedUrl)
-      || extractAssignmentId(buttonUrl)
+    const buttonUrl = submitButton ? findAssignmentUrlFromElement(submitButton, courseUrl) : null;
+    const url = linkedUrl || buttonUrl || findAssignmentUrlFromElement(row, courseUrl);
+    const assignmentId = findAssignmentIdFromElement(row, url)
       || cleanText(submitButton ? submitButton.getAttribute("data-assignment-id") : "");
     const title = cleanText(
       (link && link.textContent) ||
@@ -317,7 +373,7 @@
   function buildAssignment(link, container, courseName, courseUrl, url, assignmentId) {
     const rawLines = extractTextLines(container);
     const title = cleanText(
-      link.textContent ||
+      (link ? link.textContent : "") ||
       findFirstText(container, ["h2", "h3", "h4", ".name", ".title", ".assignmentName", ".submissionTitle"])
     );
 
@@ -330,7 +386,9 @@
     const status = findStatus(container, rawLines);
 
     return {
-      id: buildAssignmentId(courseUrl, assignmentId),
+      id: assignmentId
+        ? buildAssignmentId(courseUrl, assignmentId)
+        : buildSyntheticAssignmentId(courseUrl, title, dueInfo.timestampText || status || url || "assignment"),
       title,
       courseName: cleanText(courseName) || "Unknown Course",
       dueAt: dueInfo.isoString,
@@ -519,6 +577,25 @@
     return text.split("\n").map((line) => cleanText(line)).filter(Boolean);
   }
 
+  function findAssignmentTables() {
+    return Array.from(document.querySelectorAll("table")).filter((table) => {
+      if (table.id === "assignments-student-table") {
+        return true;
+      }
+
+      if (!table.querySelector("tbody tr")) {
+        return false;
+      }
+
+      if (table.querySelector("a[href*='/assignments/'], [data-assignment-id], [data-assignment-url], [data-post-url]")) {
+        return true;
+      }
+
+      const headerText = cleanText(Array.from(table.querySelectorAll("thead th")).map((header) => header.textContent).join(" "));
+      return /\b(name|assignment|status|due)\b/i.test(headerText);
+    });
+  }
+
   function getAssignmentsTableHeaderIndexes(table) {
     const headers = Array.from(table.querySelectorAll("thead th"));
     const hasReleasedDue = headers.some((header) => /released\s+due/i.test(cleanText(header.textContent)));
@@ -566,6 +643,102 @@
   function extractAssignmentId(url) {
     const match = String(url || "").match(/\/assignments\/(\d+)/);
     return match ? match[1] : null;
+  }
+
+  function buildAssignmentUrl(courseUrl, assignmentId) {
+    const courseId = extractCourseId(courseUrl);
+    if (!courseId || !assignmentId) {
+      return null;
+    }
+
+    return `${window.location.origin}/courses/${courseId}/assignments/${assignmentId}`;
+  }
+
+  function findAssignmentUrlFromElement(element, courseUrl) {
+    if (!element) {
+      return null;
+    }
+
+    const attributeNames = [
+      "href",
+      "data-assignment-url",
+      "data-post-url",
+      "data-url"
+    ];
+
+    for (const attributeName of attributeNames) {
+      const value = element.getAttribute && element.getAttribute(attributeName);
+      const normalizedUrl = normalizeAbsoluteUrl(value);
+      if (extractAssignmentId(normalizedUrl)) {
+        return normalizedUrl;
+      }
+    }
+
+    const nestedCandidate = element.querySelector && element.querySelector(
+      "a[href*='/assignments/'], [data-assignment-url], [data-post-url]"
+    );
+    if (nestedCandidate && nestedCandidate !== element) {
+      const nestedUrl = findAssignmentUrlFromElement(nestedCandidate, courseUrl);
+      if (nestedUrl) {
+        return nestedUrl;
+      }
+    }
+
+    const assignmentId = findAssignmentIdFromElement(element);
+    if (assignmentId) {
+      return buildAssignmentUrl(courseUrl, assignmentId);
+    }
+
+    return null;
+  }
+
+  function findAssignmentIdFromElement(element, fallbackUrl = null) {
+    if (!element) {
+      return extractAssignmentId(fallbackUrl);
+    }
+
+    const attributeNames = [
+      "data-assignment-id",
+      "data-id"
+    ];
+
+    for (const attributeName of attributeNames) {
+      const value = cleanText(element.getAttribute && element.getAttribute(attributeName));
+      if (/^\d+$/.test(value)) {
+        return value;
+      }
+    }
+
+    const directUrl = findUrlAttribute(element);
+    const directId = extractAssignmentId(directUrl || fallbackUrl);
+    if (directId) {
+      return directId;
+    }
+
+    const nestedCandidate = element.querySelector && element.querySelector(
+      "a[href*='/assignments/'], [data-assignment-id], [data-assignment-url], [data-post-url]"
+    );
+    if (nestedCandidate && nestedCandidate !== element) {
+      return findAssignmentIdFromElement(nestedCandidate, fallbackUrl);
+    }
+
+    return extractAssignmentId(fallbackUrl);
+  }
+
+  function findUrlAttribute(element) {
+    if (!element || !element.getAttribute) {
+      return null;
+    }
+
+    const attributeNames = ["href", "data-assignment-url", "data-post-url", "data-url"];
+    for (const attributeName of attributeNames) {
+      const value = normalizeAbsoluteUrl(element.getAttribute(attributeName));
+      if (value) {
+        return value;
+      }
+    }
+
+    return null;
   }
 
   function looksLikeTimestamp(text) {
@@ -763,6 +936,10 @@
   }
 
   function findFirstText(root, selectors) {
+    if (!root || !root.querySelector) {
+      return "";
+    }
+
     for (const selector of selectors) {
       const element = root.querySelector(selector);
       const text = cleanText(element ? element.textContent : "");
@@ -789,9 +966,10 @@
     return normalized || "item";
   }
 
-  function waitForAssignmentsContent(timeoutMs = 2500) {
+  function waitForAssignmentsContent(timeoutMs = 5000) {
     return new Promise((resolve) => {
       const startedAt = Date.now();
+      let observer = null;
 
       function hasAssignmentContent() {
         if (document.querySelector("#assignments-student-table tbody tr button[data-assignment-id]")) {
@@ -806,20 +984,127 @@
           return true;
         }
 
+        if (document.querySelector("[data-assignment-id], [data-assignment-url], [data-post-url]")) {
+          return true;
+        }
+
         return false;
+      }
+
+      function finish() {
+        if (observer) {
+          observer.disconnect();
+        }
+
+        resolve();
       }
 
       function check() {
         if (hasAssignmentContent() || Date.now() - startedAt >= timeoutMs) {
-          resolve();
+          finish();
           return;
         }
 
         setTimeout(check, 150);
       }
 
+      observer = new MutationObserver(() => {
+        if (hasAssignmentContent()) {
+          finish();
+        }
+      });
+
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true
+      });
+
       check();
     });
+  }
+
+  function waitForDashboardContent(timeoutMs = 5000) {
+    return new Promise((resolve) => {
+      const startedAt = Date.now();
+      let observer = null;
+
+      function hasDashboardContent() {
+        return Boolean(document.querySelector("a[href*='/courses/']"));
+      }
+
+      function finish() {
+        if (observer) {
+          observer.disconnect();
+        }
+
+        resolve();
+      }
+
+      function check() {
+        if (hasDashboardContent() || Date.now() - startedAt >= timeoutMs) {
+          finish();
+          return;
+        }
+
+        setTimeout(check, 150);
+      }
+
+      observer = new MutationObserver(() => {
+        if (hasDashboardContent()) {
+          finish();
+        }
+      });
+
+      observer.observe(document.documentElement, {
+        childList: true,
+        subtree: true
+      });
+
+      check();
+    });
+  }
+
+  function shouldReplaceCourseCandidate(existing, nextCandidate) {
+    if (!existing) {
+      return true;
+    }
+
+    if (existing.courseName === nextCandidate.courseName) {
+      return nextCandidate.courseUrl.length < existing.courseUrl.length;
+    }
+
+    return scoreCourseName(nextCandidate.courseName) > scoreCourseName(existing.courseName);
+  }
+
+  function scoreCourseName(courseName) {
+    const cleaned = cleanText(courseName);
+    if (!cleaned) {
+      return 0;
+    }
+
+    let score = cleaned.length;
+
+    if (/\b(course|section|assignment|dashboard)\b/i.test(cleaned)) {
+      score -= 10;
+    }
+
+    if (/[A-Za-z]/.test(cleaned) && /\d/.test(cleaned)) {
+      score += 5;
+    }
+
+    return score;
+  }
+
+  function extractAssignmentCount(root) {
+    const text = cleanText(
+      findFirstText(root, [
+        ".courseBox--assignments .left",
+        ".courseBox--assignments",
+        "[class*='assignments']"
+      ])
+    );
+    const match = text.match(/(\d+)\s+assignments?/i);
+    return match ? Number(match[1]) : null;
   }
 
   function escapeForRegExp(value) {

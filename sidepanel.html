@@ -23,24 +23,24 @@
 
         <div class="tab-row" role="tablist" aria-label="Planner views">
           <button
-            id="todoTabButton"
+            id="calendarTabButton"
             class="tab-button is-active"
             type="button"
             role="tab"
             aria-selected="true"
-            aria-controls="todoPanel"
-            data-tab-button="todo">
-            Todo
+            aria-controls="calendarPanel"
+            data-tab-button="calendar">
+            Calendar
           </button>
           <button
-            id="calendarTabButton"
+            id="todoTabButton"
             class="tab-button"
             type="button"
             role="tab"
             aria-selected="false"
-            aria-controls="calendarPanel"
-            data-tab-button="calendar">
-            Calendar
+            aria-controls="todoPanel"
+            data-tab-button="todo">
+            Todo
           </button>
         </div>
       </header>
@@ -64,12 +64,7 @@
         </div>
       </section>
 
-      <section id="todoPanel" class="tab-panel" role="tabpanel" aria-labelledby="todoTabButton">
-        <section id="stateArea" class="state-area"></section>
-        <section id="assignmentSections" class="assignment-sections"></section>
-      </section>
-
-      <section id="calendarPanel" class="tab-panel hidden" role="tabpanel" aria-labelledby="calendarTabButton">
+      <section id="calendarPanel" class="tab-panel" role="tabpanel" aria-labelledby="calendarTabButton">
         <section class="panel-card calendar-card">
           <div class="calendar-top-row">
             <div>
@@ -94,6 +89,11 @@
           <section id="calendarAssignmentsArea" class="calendar-assignments-area"></section>
         </section>
         <section id="calendarStateArea" class="state-area"></section>
+      </section>
+
+      <section id="todoPanel" class="tab-panel hidden" role="tabpanel" aria-labelledby="todoTabButton">
+        <section id="stateArea" class="state-area"></section>
+        <section id="assignmentSections" class="assignment-sections"></section>
       </section>
     </div>
 

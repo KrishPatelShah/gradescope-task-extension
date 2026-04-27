@@ -31,8 +31,8 @@ const state = {
   query: "",
   courseFilter: "all",
   activeFilter: "All",
-  activeTab: "todo",
-  selectedDate: null,
+  activeTab: "calendar",
+  selectedDate: formatDayKey(new Date()),
   visibleMonth: startOfMonth(new Date())
 };
 
@@ -68,6 +68,7 @@ function initialize() {
   renderWeekdays();
   renderFilterChips();
   attachEventListeners();
+  render();
   loadInitialState();
 
   chrome.runtime.onMessage.addListener((message) => {
@@ -170,7 +171,21 @@ async function loadInitialState() {
   }
 
   try {
-    await chrome.runtime.sendMessage({ type: "PANEL_OPENED" });
+    const [activeTab] = await chrome.tabs.query({
+      active: true,
+      currentWindow: true
+    });
+
+    await chrome.runtime.sendMessage({
+      type: "PANEL_OPENED",
+      tabContext: activeTab
+        ? {
+            id: activeTab.id,
+            url: activeTab.url,
+            windowId: activeTab.windowId
+          }
+        : null
+    });
   } catch (error) {
     // If the service worker is cold, GET_CACHE usually wakes it first.
   }
@@ -180,11 +195,9 @@ function applyCacheToState() {
   state.assignments = Array.isArray(state.cache && state.cache.assignments) ? state.cache.assignments : [];
 
   if (!state.selectedDate) {
-    const firstUpcomingAssignment = getUpcomingAssignments()[0];
-    const firstTodoAssignmentWithDate = getTodoAssignments().find((assignment) => assignment.dueAt);
-    const firstCalendarAssignment = getCalendarBaseAssignments()[0];
-    const firstAssignmentWithDate = firstUpcomingAssignment || firstTodoAssignmentWithDate || firstCalendarAssignment || state.assignments.find((assignment) => assignment.dueAt);
-    state.visibleMonth = startOfMonth(firstAssignmentWithDate ? new Date(firstAssignmentWithDate.dueAt) : new Date());
+    const today = new Date();
+    state.selectedDate = formatDayKey(today);
+    state.visibleMonth = startOfMonth(today);
   }
 
   populateCourseFilter();
@@ -309,9 +322,12 @@ function renderWeekdays() {
 
 function renderCalendarPanel() {
   const calendarBaseAssignments = getCalendarVisibleAssignments();
+  const hasAssignments = state.assignments.length > 0;
 
-  if (!state.assignments.length) {
-    elements.calendarCard.classList.add("hidden");
+  elements.calendarCard.classList.remove("hidden");
+  renderCalendar(calendarBaseAssignments);
+
+  if (!hasAssignments) {
     elements.calendarStateArea.innerHTML = renderStateCard(
       "No cached assignments yet",
       "Open Gradescope while signed in, then press Refresh to scan your course assignment pages and build the planner."
@@ -320,7 +336,6 @@ function renderCalendarPanel() {
   }
 
   if (!calendarBaseAssignments.length) {
-    elements.calendarCard.classList.add("hidden");
     elements.calendarStateArea.innerHTML = renderStateCard(
       hasAnyDatedAssignments()
         ? "No dated assignments match these filters"
@@ -332,9 +347,7 @@ function renderCalendarPanel() {
     return;
   }
 
-  elements.calendarCard.classList.remove("hidden");
   elements.calendarStateArea.innerHTML = "";
-  renderCalendar(calendarBaseAssignments);
 }
 
 function renderCalendar(assignments) {

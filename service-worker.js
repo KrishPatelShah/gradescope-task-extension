@@ -3,10 +3,12 @@ const DASHBOARD_URL = `${GRADESCOPE_ORIGIN}/`;
 const CACHE_KEY = "gradescopeDashboardCache";
 const AUTO_REFRESH_MAX_AGE_MS = 60 * 60 * 1000;
 const AUTO_REFRESH_COOLDOWN_MS = 60 * 1000;
-const SCRAPE_WAIT_MS = 350;
+const SCRAPE_WAIT_MS = 150;
 const TAB_TIMEOUT_MS = 30000;
+const SIDEPANEL_PATH = "sidepanel.html";
 
 const scrapeTabIds = new Set();
+const autoClosePanelWindowIds = new Set();
 
 let lastVisitRefreshAt = 0;
 let refreshState = {
@@ -29,7 +31,7 @@ chrome.runtime.onStartup.addListener(() => {
 });
 
 chrome.action.onClicked.addListener(async (tab) => {
-  if (!tab || !isGradescopeUrl(tab.url)) {
+  if (!tab || typeof tab.id !== "number") {
     return;
   }
 
@@ -37,6 +39,12 @@ chrome.action.onClicked.addListener(async (tab) => {
     await chrome.sidePanel.open({ tabId: tab.id });
   } catch (error) {
     console.warn("Unable to open the side panel.", error);
+  }
+
+  if (isGradescopeUrl(tab.url)) {
+    forceAutoRefresh("action_click").catch((error) => {
+      console.warn("Action-click refresh failed.", error);
+    });
   }
 });
 
@@ -98,7 +106,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "PANEL_OPENED") {
-    handlePanelOpened(sendResponse);
+    handlePanelOpened(message.tabContext || null, sendResponse);
     return true;
   }
 
@@ -128,6 +136,15 @@ async function initializeSidePanel() {
   try {
     const tabs = await chrome.tabs.query({});
     await Promise.all(tabs.map((tab) => syncSidePanelForTab(tab)));
+
+    const activeTabs = tabs.filter((tab) => tab.active && !scrapeTabIds.has(tab.id));
+    await Promise.all(activeTabs.map((tab) => syncActiveSidePanelState(tab)));
+
+    if (activeTabs.some((tab) => isGradescopeUrl(tab.url))) {
+      forceAutoRefresh("startup").catch((error) => {
+        console.warn("Initial Gradescope refresh failed.", error);
+      });
+    }
   } catch (error) {
     console.warn("Unable to initialize Gradescope side panel tab state.", error);
   }
@@ -164,11 +181,24 @@ async function handleStartRefresh(reason, sendResponse) {
   }
 }
 
-async function handlePanelOpened(sendResponse) {
+async function handlePanelOpened(tabContext, sendResponse) {
   try {
-    const shouldRefresh = await shouldAutoRefresh();
+    if (tabContext && typeof tabContext.windowId === "number") {
+      if (isGradescopeUrl(tabContext.url)) {
+        autoClosePanelWindowIds.add(tabContext.windowId);
+      } else {
+        autoClosePanelWindowIds.delete(tabContext.windowId);
+      }
+    }
 
-    if (shouldRefresh && !refreshState.running) {
+    const shouldRefresh = await shouldAutoRefresh();
+    const shouldForcePanelRefresh = shouldRefresh && isGradescopeUrl(tabContext && tabContext.url);
+
+    if (shouldForcePanelRefresh && !refreshState.running) {
+      forceAutoRefresh("panel_open").catch((error) => {
+        console.warn("Forced panel-open refresh failed.", error);
+      });
+    } else if (shouldRefresh && !refreshState.running) {
       maybeAutoRefresh("panel_open").catch((error) => {
         console.warn("Panel-open refresh failed.", error);
       });
@@ -199,6 +229,19 @@ async function maybeAutoRefresh(reason = "visit") {
   }
 
   lastVisitRefreshAt = now;
+  await refreshGradescopeData(reason);
+}
+
+async function forceAutoRefresh(reason = "panel_open") {
+  if (refreshState.running) {
+    return;
+  }
+
+  if (!await shouldAutoRefresh()) {
+    return;
+  }
+
+  lastVisitRefreshAt = Date.now();
   await refreshGradescopeData(reason);
 }
 
@@ -354,49 +397,48 @@ async function refreshGradescopeData(reason) {
 async function scrapeSingleCourse(tabId, course) {
   try {
     const primaryAssignmentsUrl = buildAssignmentsPageUrl(course.courseUrl);
-    await navigateTab(tabId, primaryAssignmentsUrl);
-
-    let pageData = await sendTabMessageWithRetry(tabId, {
-      type: "GS_EXTRACT_ASSIGNMENTS",
-      courseHint: {
-        ...course,
-        courseUrl: primaryAssignmentsUrl
-      }
-    });
-
     const mergedAssignments = [];
+    let pageData = null;
+    const candidateUrls = [];
+    const attemptedUrls = new Set();
+    const expectedAssignmentCount = Number.isFinite(course.expectedAssignmentCount)
+      ? course.expectedAssignmentCount
+      : null;
+
+    pageData = await scrapeCoursePage(tabId, course, primaryAssignmentsUrl, attemptedUrls);
+
     if (Array.isArray(pageData.assignments) && pageData.assignments.length) {
       mergeAssignments(mergedAssignments, pageData.assignments);
     }
 
-    const candidateUrls = Array.isArray(pageData.assignmentListUrls) ? pageData.assignmentListUrls : [];
-    const attemptedUrls = new Set([normalizeUrl(primaryAssignmentsUrl)]);
+    if (Array.isArray(pageData.assignmentListUrls) && pageData.assignmentListUrls.length) {
+      candidateUrls.push(...pageData.assignmentListUrls);
+    }
 
-    if (!mergedAssignments.length && normalizeUrl(course.courseUrl) !== normalizeUrl(primaryAssignmentsUrl)) {
-      attemptedUrls.add(normalizeUrl(course.courseUrl));
-      await navigateTab(tabId, course.courseUrl);
-      pageData = await sendTabMessageWithRetry(tabId, {
-        type: "GS_EXTRACT_ASSIGNMENTS",
-        courseHint: course
-      });
+    if (shouldScrapeSupplementalCoursePage(course, primaryAssignmentsUrl, mergedAssignments, expectedAssignmentCount)) {
+      const supplementalPageData = await scrapeCoursePage(tabId, course, course.courseUrl, attemptedUrls);
+      pageData = supplementalPageData || pageData;
 
-      if (Array.isArray(pageData.assignments) && pageData.assignments.length) {
-        mergeAssignments(mergedAssignments, pageData.assignments);
+      if (supplementalPageData && Array.isArray(supplementalPageData.assignments) && supplementalPageData.assignments.length) {
+        mergeAssignments(mergedAssignments, supplementalPageData.assignments);
+      }
+
+      if (supplementalPageData && Array.isArray(supplementalPageData.assignmentListUrls) && supplementalPageData.assignmentListUrls.length) {
+        candidateUrls.push(...supplementalPageData.assignmentListUrls);
       }
     }
 
     for (const candidateUrl of candidateUrls) {
+      if (!shouldKeepSearching(mergedAssignments, expectedAssignmentCount)) {
+        break;
+      }
+
       const normalizedCandidate = normalizeUrl(candidateUrl);
       if (!normalizedCandidate || attemptedUrls.has(normalizedCandidate)) {
         continue;
       }
 
-      attemptedUrls.add(normalizedCandidate);
-      await navigateTab(tabId, candidateUrl);
-      pageData = await sendTabMessageWithRetry(tabId, {
-        type: "GS_EXTRACT_ASSIGNMENTS",
-        courseHint: course
-      });
+      pageData = await scrapeCoursePage(tabId, course, candidateUrl, attemptedUrls) || pageData;
 
       if (Array.isArray(pageData.assignments) && pageData.assignments.length) {
         mergeAssignments(mergedAssignments, pageData.assignments);
@@ -506,6 +548,43 @@ async function sendTabMessageWithRetry(tabId, message, maxAttempts = 8) {
   throw new Error(lastError ? lastError.message : "Unable to contact the Gradescope content script.");
 }
 
+async function scrapeCoursePage(tabId, course, url, attemptedUrls) {
+  const normalizedUrl = normalizeUrl(url);
+  if (!normalizedUrl || attemptedUrls.has(normalizedUrl)) {
+    return null;
+  }
+
+  attemptedUrls.add(normalizedUrl);
+  await navigateTab(tabId, url);
+  return sendTabMessageWithRetry(tabId, {
+    type: "GS_EXTRACT_ASSIGNMENTS",
+    courseHint: {
+      ...course,
+      courseUrl: url
+    }
+  });
+}
+
+function shouldScrapeSupplementalCoursePage(course, primaryAssignmentsUrl, assignments, expectedAssignmentCount) {
+  if (normalizeUrl(course.courseUrl) === normalizeUrl(primaryAssignmentsUrl)) {
+    return false;
+  }
+
+  return shouldKeepSearching(assignments, expectedAssignmentCount);
+}
+
+function shouldKeepSearching(assignments, expectedAssignmentCount) {
+  if (!Array.isArray(assignments) || !assignments.length) {
+    return true;
+  }
+
+  if (typeof expectedAssignmentCount === "number" && expectedAssignmentCount > 0) {
+    return assignments.length < expectedAssignmentCount;
+  }
+
+  return false;
+}
+
 function mergeAssignments(targetAssignments, nextAssignments) {
   const assignmentsByKey = new Map(
     targetAssignments.map((assignment) => [assignment.id || assignment.url, assignment])
@@ -567,20 +646,13 @@ async function syncSidePanelForTab(tab) {
     return;
   }
 
-  const enabled = isGradescopeUrl(tab.url);
-
   await chrome.sidePanel.setOptions({
     tabId: tab.id,
-    path: "sidepanel.html",
-    enabled
+    path: SIDEPANEL_PATH,
+    enabled: true
   });
 
-  if (enabled) {
-    await chrome.action.enable(tab.id);
-    return;
-  }
-
-  await chrome.action.disable(tab.id);
+  await chrome.action.enable(tab.id);
 }
 
 async function syncActiveSidePanelState(tab) {
@@ -598,15 +670,20 @@ async function syncActiveSidePanelState(tab) {
     } catch (error) {
       console.warn("Unable to auto-open side panel on Gradescope tab.", error);
     }
+
+    forceAutoRefresh("gradescope_open").catch((error) => {
+      console.warn("Gradescope-open refresh failed.", error);
+    });
     return;
   }
 
-  if (!chrome.sidePanel.close) {
+  if (!autoClosePanelWindowIds.has(tab.windowId) || !chrome.sidePanel.close) {
     return;
   }
 
   try {
     await chrome.sidePanel.close({ windowId: tab.windowId });
+    autoClosePanelWindowIds.delete(tab.windowId);
   } catch (error) {
     console.warn("Unable to close side panel after leaving Gradescope.", error);
   }
